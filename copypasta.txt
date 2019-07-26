@@ -1,0 +1,65 @@
+mongodb+srv://<user>:<pass>@cluster0-enuba.mongodb.net/test?retryWrites=true&w=majority
+
+//create and initialize device
+//setTimeout(function(argument) {  }, 0)
+//stimulate add 10000 devices
+// var startAddingAllDevices = new Date();
+// for (let i = 0; i < 10; i++) {
+//     let deviceKey = ("device_" + i.toString());
+//     client.get(deviceKey, function (err, data) {
+//         if (err) {
+//             //console.log('key exists: ' + deviceKey);
+//         } else {
+//             client.lpush(deviceKey, "");
+//             //console.log('key added: ' + deviceKey);
+//         }
+//     });
+// }
+// var endAddingAllDevices = new Date() - startAddingAllDevices
+// console.info('1000 Devices added in: %dms', endAddingAllDevices);
+
+
+function saveToCSV(objectArray) {
+    const csvWriter = createCsvWriter({
+        path: 'out.csv',
+        header: [
+            { id: 'device_ID', title: 'device_ID' },
+            { id: 'device_data', title: 'device_data' }
+        ]
+    });
+
+    const data = []
+    for(let i = 0; i < objectArray.length; i++){
+        data.push({device_ID: "device_" + i, device_data:"something..."})
+    }
+    csvWriter
+        .writeRecords(data)
+        .then(() => console.log('The CSV file was written successfully'));
+}
+
+
+//move recent device data to mongodb and pop them out of redis lists
+const flushInterval = setInterval(() => {
+    var startFlushingDataToDb = new Date();
+    console.log("flush...");
+    client.keys("*", function (err, replies) {
+        let dbDump = [];
+        replies.forEach(function (deviceKey1, i) {
+            client.LRANGE(deviceKey1, 0, 10, function (err, elements) {
+                let deviceData = { deviceKey: deviceKey1, Values: elements };
+                dbDump.push(deviceData);
+
+                if (i === (replies.length - 1)) {
+                    client.flushdb(function () {
+                        //console.log(dbDump);
+                        saveToCSV(dbDump);
+                        //client.quit();  
+                        var endFlushingDataToDb = new Date() - startFlushingDataToDb;
+                        console.info('10000 keys copied and flushed in: %dms', endFlushingDataToDb);
+                        client.quit();
+                    });
+                }
+            })
+        });
+    });
+}, 15000);
