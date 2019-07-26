@@ -1,9 +1,7 @@
 const express = require('express');
-const path = require('path');
 const redis = require('redis');
 const mongoose = require('mongoose');
-const csv = require('csv-parser');
-const fs = require('fs');
+const Device = require("./models/Device");
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // Init app
@@ -26,26 +24,12 @@ client.on('connect', function () {
 const server = '127.0.0.1:27017'; // REPLACE WITH YOUR DB SERVER
 const database = 'redis_tests';      // REPLACE WITH YOUR DB NAME
 
-//mongoose.connect("mongodb+srv://soni:cnet33kc@cluster0-enuba.mongodb.net/test?retryWrites=true&w=majority");
 mongoose.connect(`mongodb://${server}/${database}`);
 var db = mongoose.connection;
 db.on('error', console.error.bind(console, 'connection error:'));
 db.once('open', function () {
     console.info('Mongo connection succeded');
 });
-
-//define schema module
-var Schema = mongoose.Schema;
-
-//create device and embedded[rawpoint] schemas
-var rawPointSchema = new Schema({ timestamp: String });
-var deviceSchema = new Schema({
-    device_id: String,
-    raw_points: [rawPointSchema]
-});
-
-//creating the device model
-let Device = mongoose.model('Device', deviceSchema);
 
 //Initialize randomizer
 function getRandomInt(max) {
@@ -86,7 +70,6 @@ const flushInterval = setInterval(() => {
                 }
                 if (i === (replies.length - 1)) {
                     //     client.flushdb(function () {
-                    //saveToCSV(dbDump);
                     saveToDb(dbDump);
                     //clearInterval(flushInterval);
                     //client.quit();  
@@ -98,24 +81,6 @@ const flushInterval = setInterval(() => {
         });
     });
 }, 15000);
-
-function saveToCSV(objectArray) {
-    const csvWriter = createCsvWriter({
-        path: 'out.csv',
-        header: [
-            { id: 'device_ID', title: 'device_ID' },
-            { id: 'device_data', title: 'device_data' }
-        ]
-    });
-
-    const data = []
-    for (let i = 0; i < objectArray.length; i++) {
-        data.push({ device_ID: objectArray[i].deviceKey, device_data: objectArray[i].Values })
-    }
-    csvWriter
-        .writeRecords(data)
-        .then(() => console.log('The CSV file was written successfully'));
-}
 
 function saveToDb(objectArray) {
     //start timer
