@@ -4,11 +4,13 @@
   "description": "testing redis for our project needs",
   "main": "app.js",
   "scripts": {
-    "start": "nodemon app.js"
+    "start": "nodemon app.js",
+    "multi": "concurrently \"nodemon app.js\" \"nodemon app2.js\""
   },
   "author": "soni lamkaj",
   "license": "ISC",
   "dependencies": {
+    "concurrently": "^4.1.1",
     "connect-mongo": "^3.0.0",
     "csv-parser": "^2.3.0",
     "csv-writer": "^1.5.0",

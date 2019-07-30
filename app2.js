@@ -5,7 +5,7 @@ const Device = require("./models/Device");
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // Init app
-const port = 3000;
+const port = 3001;
 const app = express();
 
 //Listen on port
@@ -37,57 +37,60 @@ function getRandomInt(max) {
 }
 
 //Add raw data to random devices
-let dataCollectorExetimes = 0;
-const dataCollector = setInterval(() => {
-    for (let j = 0; j < 10; j++) {
-        //simulate random devices
-        var currentdate = new Date();
-        let deviceKey = "device_" + j;
-        let raw_point_data = "x,y_" + currentdate.getTime().toString();
-        let time_stamp = currentdate.getTime().toString();
-        client.zadd(deviceKey, time_stamp, raw_point_data, function () {
-            //
-        });
-    }
-    console.info('10 DataPoints collected');
-    dataCollectorExetimes++;
-    if (dataCollectorExetimes >= 9) {
-        clearInterval(dataCollector);
-    }
-}, 150);
+// const dataCollector = setInterval(() => {
+//     for (let j = 0; j < 10; j++) {
+//         //simulate random devices
+//         var currentdate = new Date();
+//         let deviceKey = "device_" + j;
+//         let raw_point_data = "x,y_" + currentdate.getTime().toString();
+//         let time_stamp = currentdate.getTime().toString();
+//         //push keys in devices
+//         // client.rpush(deviceKey, raw_point_data, function () {
+
+//         // });
+//         client.zadd(deviceKey, time_stamp, raw_point_data, function () {
+//             //
+//         });
+//     }
+//     console.info('10 DataPoints collected');
+// }, 1500);
 
 //move recent device data to mongodb and pop them out of redis lists
 const visitProcessor = setInterval(() => {
     var startFlushingData = new Date();
     console.log("flush...");
+    //clearInterval(dataCollector);
     client.keys("*", function (err, replies) {
         let dbDump = [];
         let deviceInstances = replies;
-        //multi = client.multi();
-        var currentTime = new Date();
-        deviceInstances.forEach(function (deviceKey, i) {
-            //begin transactions here
-            client.ZREVRANGE(deviceKey, 0, -1, function (err, elements) {
-                if (elements[0]) {
-                    client.zscore(deviceKey, elements[0].toString(), (err, score) => {
-                        if (score <= (currentTime.getTime() - 15000)) {
-                            let deviceData = { deviceKey: deviceKey, Values: elements };
-                            client.del(deviceKey, function () {
-                                dbDump.push(deviceData);
-                                //if this is the last device key index (save the dbDump to database)
-                                if (i === (deviceInstances.length - 1)) {
-                                    saveToDb(dbDump);
-                                    var endFlushingData = new Date() - startFlushingData;
-                                    console.info('10 keys copied and send to db in: %dms', endFlushingData);
-                                }
-                            })
-                        }
-                    });
+        multi = client.multi();
+        deviceInstances.forEach(function (deviceKey1, i) {
+            client.ZREVRANGE(deviceKey1, 0, -1, function (err, elements) {
+                if (elements) {
+                    if (elements[0]) {
+                        let deviceData = { deviceKey: deviceKey1, Values: elements[0] };
+                        multi.del(deviceKey1, function () {
+                            //
+                        })
+                        multi.exec(function (err, replies) {
+                            dbDump.push(deviceData);
+                            if (i === (deviceInstances.length - 1)) {
+                                //     client.flushdb(function () {
+                                saveToDb(dbDump);
+                                //clearInterval(visitProcessor);
+                                //client.quit();  
+                                var endFlushingData = new Date() - startFlushingData;
+                                console.info('10 keys copied and send to db in: %dms', endFlushingData);
+                                //     });
+                            }
+                        });
+                    }
                 }
             })
+
         });
     });
-}, 17000);
+}, 15000);
 
 function saveToDb(objectArray) {
     //start timer
@@ -103,9 +106,7 @@ function saveToDb(objectArray) {
         Device.findOne({ device_id: `${element.deviceKey}` }, function (err, deviceRes) {
             if (!deviceRes && (element.Values != null)) {
                 var device = new Device({ device_id: `${element.deviceKey}` });
-                for (let i = 0; i < element.Values.length; i++) {
-                    device.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
+                device.raw_points.push({ timestamp: `${element.Values} app2` });
                 device.save(function (err, document) {
                     console.log(document);
                 });
@@ -116,9 +117,7 @@ function saveToDb(objectArray) {
                 console.log('device ' + deviceRes + " error: " + err);
             }
             if (deviceRes && (element.Values != null)) {
-                for (let i = 0; i < element.Values.length; i++) {
-                    deviceRes.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
+                deviceRes.raw_points.push({ timestamp: `${element.Values} app2` });
                 deviceRes.save(function (err, document) {
                 });
                 //console.log('device ' + deviceRes);
