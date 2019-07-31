@@ -49,23 +49,23 @@ const dataCollector = setInterval(() => {
             //
         });
     }
-    console.info('10 DataPoints collected');
+    //console.info('DataPoints collected');
     dataCollectorExetimes++;
-    if (dataCollectorExetimes >= 9) {
+    if (dataCollectorExetimes >= 50) {
         clearInterval(dataCollector);
     }
-}, 150);
+}, 10);
 
 //move recent device data to mongodb and pop them out of redis lists
 const visitProcessor = setInterval(() => {
     var startFlushingData = new Date();
-    console.log("flush...");
+    client.info.me
     client.keys("*", function (err, replies) {
         let dbDump = [];
         let deviceInstances = replies;
         //multi = client.multi();
         var currentTime = new Date();
-        deviceInstances.forEach(function (deviceKey, i) {
+        replies.forEach((deviceKey, i) => {
             //begin transactions here
             client.ZREVRANGE(deviceKey, 0, -1, function (err, elements) {
                 if (elements[0]) {
@@ -79,10 +79,11 @@ const visitProcessor = setInterval(() => {
                                         if (results == 1) {
                                             dbDump.push(deviceData);
                                         }
-                                        if (i === (deviceInstances.length - 1)) {
-                                            saveToDb(dbDump);
+                                        if (i === (replies.length - 1)) {
                                             var endFlushingData = new Date() - startFlushingData;
                                             console.info(`${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
+                                            console.log(`app1 memory usage before Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
+                                            saveToDb(dbDump);    
                                         }
                                     })
                             })
@@ -92,12 +93,11 @@ const visitProcessor = setInterval(() => {
             })
         });
     });
-}, 17000);
+}, 18000);
 
 function saveToDb(objectArray) {
     //start timer
     var startFlushingDataToDb = new Date();
-
     objectArray.forEach((element, iteretor) => {
         Device.findOne({ device_id: `${element.deviceKey}` }, function (err, deviceRes) {
             if (!deviceRes && (element.Values != null)) {
@@ -108,10 +108,6 @@ function saveToDb(objectArray) {
                 device.save(function (err, document) {
                     //console.log(document);
                 });
-                if (iteretor === (objectArray.length - 1)) {
-                    var endFlushingDataToDb = new Date() - startFlushingDataToDb;
-                    console.info('All visitst saved to db in: %dms', endFlushingDataToDb);
-                }
             }
             if (deviceRes && (element.Values != null)) {
                 for (let i = 0; i < element.Values.length; i++) {
@@ -119,11 +115,27 @@ function saveToDb(objectArray) {
                 }
                 deviceRes.save(function (err, document) {
                 });
-                if (iteretor === (objectArray.length - 1)) {
-                    var endFlushingDataToDb = new Date() - startFlushingDataToDb;
-                    console.info('All visitst updated to db in: %dms', endFlushingDataToDb);
-                }
             }
         });
     });
+    var endFlushingDataToDb = new Date() - startFlushingDataToDb;
+    console.info('All visitst updated to db in: %dms', endFlushingDataToDb);
+    console.log(`app1 memory usage after Update DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
 }
+
+
+setInterval(() => {
+    client.info((req, res) => {
+        res.split("\n").map((line) => {
+            if (line.match(/used_memory_human/)) {
+                console.log('Used redis memory: ' + line.split(":")[1]);
+                //console.log("datacoll: " + dataCollectorExetimes);
+            }
+        })
+    });
+}, 1000);
+
+function humanFileSize(size) {
+    var i = Math.floor(Math.log(size) / Math.log(1024));
+    return (size / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'kB', 'MB', 'GB', 'TB'][i];
+};
