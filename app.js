@@ -39,7 +39,7 @@ function getRandomInt(max) {
 //Add raw data to random devices
 let dataCollectorExetimes = 0;
 const dataCollector = setInterval(() => {
-    for (let j = 0; j < 10; j++) {
+    for (let j = 0; j < 1000; j++) {
         //simulate random devices
         var currentdate = new Date();
         let deviceKey = "device_" + j;
@@ -71,15 +71,20 @@ const visitProcessor = setInterval(() => {
                 if (elements[0]) {
                     client.zscore(deviceKey, elements[0].toString(), (err, score) => {
                         if (score <= (currentTime.getTime() - 15000)) {
-                            let deviceData = { deviceKey: deviceKey, Values: elements };
-                            client.del(deviceKey, function () {
-                                dbDump.push(deviceData);
-                                //if this is the last device key index (save the dbDump to database)
-                                if (i === (deviceInstances.length - 1)) {
-                                    saveToDb(dbDump);
-                                    var endFlushingData = new Date() - startFlushingData;
-                                    console.info('10 keys copied and send to db in: %dms', endFlushingData);
-                                }
+                            client.watch(deviceKey, function (err) {
+                                let deviceData = { deviceKey: deviceKey, Values: elements };
+                                client.multi()
+                                    .del(deviceKey)
+                                    .exec(function (err, results) {
+                                        if (results == 1) {
+                                            dbDump.push(deviceData);
+                                        }
+                                        if (i === (deviceInstances.length - 1)) {
+                                            saveToDb(dbDump);
+                                            var endFlushingData = new Date() - startFlushingData;
+                                            console.info(`${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
+                                        }
+                                    })
                             })
                         }
                     });
@@ -93,13 +98,7 @@ function saveToDb(objectArray) {
     //start timer
     var startFlushingDataToDb = new Date();
 
-    const data = []
-    for (let i = 0; i < objectArray.length; i++) {
-        data.push({ device_ID: objectArray[i].deviceKey, device_data: objectArray[i].Values })
-    }
-
     objectArray.forEach((element, iteretor) => {
-        // query = { device_id: `${element.deviceKey}` };
         Device.findOne({ device_id: `${element.deviceKey}` }, function (err, deviceRes) {
             if (!deviceRes && (element.Values != null)) {
                 var device = new Device({ device_id: `${element.deviceKey}` });
@@ -107,13 +106,12 @@ function saveToDb(objectArray) {
                     device.raw_points.push({ timestamp: `${element.Values[i]}` });
                 }
                 device.save(function (err, document) {
-                    console.log(document);
+                    //console.log(document);
                 });
                 if (iteretor === (objectArray.length - 1)) {
                     var endFlushingDataToDb = new Date() - startFlushingDataToDb;
                     console.info('All visitst saved to db in: %dms', endFlushingDataToDb);
                 }
-                console.log('device ' + deviceRes + " error: " + err);
             }
             if (deviceRes && (element.Values != null)) {
                 for (let i = 0; i < element.Values.length; i++) {
@@ -121,15 +119,11 @@ function saveToDb(objectArray) {
                 }
                 deviceRes.save(function (err, document) {
                 });
-                //console.log('device ' + deviceRes);
                 if (iteretor === (objectArray.length - 1)) {
                     var endFlushingDataToDb = new Date() - startFlushingDataToDb;
                     console.info('All visitst updated to db in: %dms', endFlushingDataToDb);
                 }
-                console.log('device ' + deviceRes + " error: " + err);
             }
-
         });
-
     });
 }
