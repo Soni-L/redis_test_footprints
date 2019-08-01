@@ -39,7 +39,7 @@ function getRandomInt(max) {
 //Add raw data to random devices
 let dataCollectorExetimes = 0;
 const dataCollector = setInterval(() => {
-    for (let j = 0; j < 1000; j++) {
+    for (let j = 0; j < 400; j++) {
         //simulate random devices
         var currentdate = new Date();
         let deviceKey = "device_" + j;
@@ -49,28 +49,26 @@ const dataCollector = setInterval(() => {
             //
         });
     }
-    //console.info('DataPoints collected');
     dataCollectorExetimes++;
-    if (dataCollectorExetimes >= 50) {
+    if (dataCollectorExetimes >= 5000) {
+        //more than 50 rawdatapoints does not save properly
         clearInterval(dataCollector);
     }
-}, 10);
+}, 1);
 
 //move recent device data to mongodb and pop them out of redis lists
 const visitProcessor = setInterval(() => {
     var startFlushingData = new Date();
-    client.info.me
     client.keys("*", function (err, replies) {
         let dbDump = [];
         let deviceInstances = replies;
-        //multi = client.multi();
         var currentTime = new Date();
         replies.forEach((deviceKey, i) => {
-            //begin transactions here
             client.ZREVRANGE(deviceKey, 0, -1, function (err, elements) {
                 if (elements[0]) {
                     client.zscore(deviceKey, elements[0].toString(), (err, score) => {
                         if (score <= (currentTime.getTime() - 15000)) {
+                            //begin transactions here
                             client.watch(deviceKey, function (err) {
                                 let deviceData = { deviceKey: deviceKey, Values: elements };
                                 client.multi()
@@ -83,7 +81,7 @@ const visitProcessor = setInterval(() => {
                                             var endFlushingData = new Date() - startFlushingData;
                                             console.info(`${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
                                             console.log(`app1 memory usage before Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
-                                            saveToDb(dbDump);    
+                                            saveToDb(dbDump);
                                         }
                                     })
                             })
@@ -93,34 +91,27 @@ const visitProcessor = setInterval(() => {
             })
         });
     });
-}, 18000);
+}, 60000);
 
 function saveToDb(objectArray) {
     //start timer
     var startFlushingDataToDb = new Date();
-    objectArray.forEach((element, iteretor) => {
-        Device.findOne({ device_id: `${element.deviceKey}` }, function (err, deviceRes) {
-            if (!deviceRes && (element.Values != null)) {
-                var device = new Device({ device_id: `${element.deviceKey}` });
-                for (let i = 0; i < element.Values.length; i++) {
-                    device.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
-                device.save(function (err, document) {
-                    //console.log(document);
-                });
+    let bulk = Device.collection.initializeUnorderedBulkOp();
+    objectArray.forEach((element, iteretor) => {        
+        bulk.find({ device_id: `${element.deviceKey}` }).upsert().update(
+            { 
+                $set: { device_id: element.deviceKey },
+                $push: { raw_points: { $each: element.Values } } 
             }
-            if (deviceRes && (element.Values != null)) {
-                for (let i = 0; i < element.Values.length; i++) {
-                    deviceRes.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
-                deviceRes.save(function (err, document) {
-                });
-            }
-        });
+        );        
     });
+    bulk.execute().catch(err => {
+        console.log("App 1 could not perform bulk upsert");
+    });
+
     var endFlushingDataToDb = new Date() - startFlushingDataToDb;
     console.info('All visitst updated to db in: %dms', endFlushingDataToDb);
-    console.log(`app1 memory usage after Update DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
+    console.log(`App1 memory usage after Update DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
 }
 
 
@@ -139,3 +130,21 @@ function humanFileSize(size) {
     var i = Math.floor(Math.log(size) / Math.log(1024));
     return (size / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'kB', 'MB', 'GB', 'TB'][i];
 };
+
+function saveToCSV(objectArray) {
+    const csvWriter = createCsvWriter({
+        path: 'out.csv',
+        header: [
+            { id: 'device_ID', title: 'device_ID' },
+            { id: 'device_data', title: 'device_data' }
+        ]
+    });
+
+    const data = []
+    for (let i = 0; i < objectArray.length; i++) {
+        data.push({ device_ID: objectArray[i].deviceKey, device_data: objectArray[i].Values })
+    }
+    csvWriter
+        .writeRecords(data)
+        .then(() => console.log('The CSV file was written successfully'));
+}

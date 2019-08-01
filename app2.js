@@ -33,7 +33,6 @@ db.once('open', function () {
 
 
 //move recent device data to mongodb and pop them out of redis lists
-//move recent device data to mongodb and pop them out of redis lists
 const visitProcessor = setInterval(() => {
     var startFlushingData = new Date();
     client.keys("*", function (err, replies) {
@@ -41,7 +40,7 @@ const visitProcessor = setInterval(() => {
         let deviceInstances = replies;
         //multi = client.multi();
         var currentTime = new Date();
-        replies.forEach(function (deviceKey, i) {
+        replies.forEach((deviceKey, i) => {
             //begin transactions here
             client.ZREVRANGE(deviceKey, 0, -1, function (err, elements) {
                 if (elements[0]) {
@@ -57,9 +56,9 @@ const visitProcessor = setInterval(() => {
                                         }
                                         if (i === (replies.length - 1)) {
                                             var endFlushingData = new Date() - startFlushingData;
-                                            console.info(`${dbDump.length} keys copied and send to db in: ${endFlushingData} ms`);
+                                            console.info(`app2 ${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
                                             console.log(`app2 memory usage before Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
-                                            saveToDb(dbDump);     
+                                            saveToDb(dbDump);
                                         }
                                     })
                             })
@@ -69,35 +68,27 @@ const visitProcessor = setInterval(() => {
             })
         });
     });
-}, 17000);
+}, 60000);
 
 function saveToDb(objectArray) {
     //start timer
     var startFlushingDataToDb = new Date();
+    let bulk = Device.collection.initializeUnorderedBulkOp();
     objectArray.forEach((element, iteretor) => {
-        Device.findOne({ device_id: `${element.deviceKey}` }, function (err, deviceRes) {
-            if (!deviceRes && (element.Values != null)) {
-                var device = new Device({ device_id: `${element.deviceKey}` });
-                for (let i = 0; i < element.Values.length; i++) {
-                    device.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
-                device.save(function (err, document) {
-                    //console.log(document);
-                });
+        bulk.find({ device_id: `${element.deviceKey}` }).upsert().update(
+            {
+                $set: { device_id: element.deviceKey },
+                $push: { raw_points: { $each: element.Values } }
             }
-            if (deviceRes && (element.Values != null)) {
-                for (let i = 0; i < element.Values.length; i++) {
-                    deviceRes.raw_points.push({ timestamp: `${element.Values[i]}` });
-                }
-                deviceRes.save(function (err, document) {
-                });
-            }
-        });
-
+        );
     });
+    bulk.execute()
+        .catch(err => {
+            console.log("App 2 could not perform bulk upsert");
+        });;
     var endFlushingDataToDb = new Date() - startFlushingDataToDb;
-    console.info('All visitst saved to db in: %dms', endFlushingDataToDb);
-    console.log(`app2 memory usage after Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
+    console.info('App2 All visitst saved to db in: %dms', endFlushingDataToDb);
+    console.log(`App2 memory usage after Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
 }
 
 function humanFileSize(size) {
