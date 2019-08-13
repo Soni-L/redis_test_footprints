@@ -20,6 +20,7 @@ client.on('connect', function () {
     console.log('Connected to Redis...');
 });
 
+
 //connect to the database
 const server = '127.0.0.1:27017'; // REPLACE WITH YOUR DB SERVER
 const database = 'redis_tests';      // REPLACE WITH YOUR DB NAME
@@ -39,18 +40,18 @@ function getRandomInt(max) {
 //Add raw data to random devices
 let dataCollectorExetimes = 0;
 const dataCollector = setInterval(() => {
-    for (let j = 0; j < 400; j++) {
+    for (let j = 0; j < 2000; j++) {
         //simulate random devices
         var currentdate = new Date();
         let deviceKey = "device_" + j;
         let raw_point_data = "x,y_" + currentdate.getTime().toString();
         let time_stamp = currentdate.getTime().toString();
-        client.zadd(deviceKey, time_stamp, raw_point_data, function () {
+        client.rpush(deviceKey, raw_point_data, function () {
             //
         });
     }
     dataCollectorExetimes++;
-    if (dataCollectorExetimes >= 5000) {
+    if (dataCollectorExetimes >= 10) {
         //more than 50 rawdatapoints does not save properly
         clearInterval(dataCollector);
     }
@@ -59,59 +60,92 @@ const dataCollector = setInterval(() => {
 //move recent device data to mongodb and pop them out of redis lists
 const visitProcessor = setInterval(() => {
     var startFlushingData = new Date();
-    client.keys("*", function (err, replies) {
-        let dbDump = [];
-        let deviceInstances = replies;
-        var currentTime = new Date();
-        replies.forEach((deviceKey, i) => {
-            client.ZREVRANGE(deviceKey, 0, -1, function (err, elements) {
-                if (elements[0]) {
-                    client.zscore(deviceKey, elements[0].toString(), (err, score) => {
-                        if (score <= (currentTime.getTime() - 15000)) {
-                            //begin transactions here
-                            client.watch(deviceKey, function (err) {
-                                let deviceData = { deviceKey: deviceKey, Values: elements };
-                                client.multi()
-                                    .del(deviceKey)
-                                    .exec(function (err, results) {
-                                        if (results == 1) {
-                                            dbDump.push(deviceData);
-                                        }
-                                        if (i === (replies.length - 1)) {
-                                            var endFlushingData = new Date() - startFlushingData;
-                                            console.info(`${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
-                                            console.log(`app1 memory usage before Save DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
-                                            saveToDb(dbDump);
-                                        }
-                                    })
-                            })
-                        }
+    var currentTime = new Date();
+    let dbDump = [];
+    var cursor = '0';
+    function scan() {
+        //Match all keys and return 10 items at a time
+        client.scan(cursor, 'MATCH', '*', 'COUNT', '10', function (err, reply) {
+            if (err) {
+                throw err;
+            }
+            cursor = reply[0];
+            if (cursor === '0') {
+                //End of the line  -- all keys were scanned
+                var endFlushingData = new Date() - startFlushingData;
+                console.info(`${dbDump.length} keys copied and send for db save in: ${endFlushingData} ms`);
+                //save object to database
+                saveToDb(dbDump);
+                return console.log('Scan Complete');
+            } else {
+                // reply[1] is an array of matched keys for the current query slice
+                for (let i = 0; i < reply[1].length; i++) {
+                    let lastAccessCurrentKey = 0;
+                    //begin transaction
+                    client.multi();
+                    //Check the last time a key was accessed (timestamp)
+                    client.object("IDLETIME", reply[1][i], function (err, lastAccess) {
+                        //touch the current key to reset its last-access time
+                        //effectively blocking the other node instance processing it
+                        client.LLEN(reply[1][i], function (err) {
+                            client.exec(function (err, results) {
+                                if (results === null) {
+                                    console.log('transaction null, skipping element');
+                                } else {
+                                    lastAccessCurrentKey = lastAccess;
+                                    console.log('transaction worked, processing element...' + lastAccessCurrentKey);
+                                }
+                            });
+                        });
                     });
+
+                    //begin processing element (if condition allows)
+                    if (lastAccessCurrentKey <= (currentTime.getTime() - 15000) ) {
+                        //second transaction
+                        client.watch(reply[1][i]);
+                        client.LRANGE(reply[1][i], 0, -1, function (err, elements) {
+                            let deviceData = { deviceKey: reply[1][i], Values: elements };
+                            client.multi()
+                                .del(reply[1][i])
+                                .exec(function (err, results) {
+                                    if (results === null) {
+                                        console.log('transaction aborted because results were null');
+                                    } else {
+                                        dbDump.push(deviceData);
+                                        console.log('transaction worked and returned', results);
+                                    }
+                                });
+                        });
+                    }
                 }
-            })
+                return scan();
+            }
         });
-    });
-}, 60000);
+    }
+    scan(); //call scan function
+}, 19000);
+
+
+
 
 function saveToDb(objectArray) {
     //start timer
     var startFlushingDataToDb = new Date();
     let bulk = Device.collection.initializeUnorderedBulkOp();
-    objectArray.forEach((element, iteretor) => {        
+    objectArray.forEach((element, iteretor) => {
         bulk.find({ device_id: `${element.deviceKey}` }).upsert().update(
-            { 
+            {
                 $set: { device_id: element.deviceKey },
-                $push: { raw_points: { $each: element.Values } } 
+                $push: { raw_points: { $each: element.Values } }
             }
-        );        
+        );
     });
     bulk.execute().catch(err => {
-        console.log("App 1 could not perform bulk upsert");
+        console.log("App 1 could not perform bulk upsert: " + err);
     });
 
     var endFlushingDataToDb = new Date() - startFlushingDataToDb;
-    console.info('All visitst updated to db in: %dms', endFlushingDataToDb);
-    console.log(`App1 memory usage after Update DB, RSS ${humanFileSize(process.memoryUsage().rss)}, heapTotal ${humanFileSize(process.memoryUsage().heapTotal)}, heapUsed ${humanFileSize(process.memoryUsage().heapUsed)}, external ${humanFileSize(process.memoryUsage().external)}`);
+    console.info('App 1 All visitst updated to db in: %dms', endFlushingDataToDb);
 }
 
 
